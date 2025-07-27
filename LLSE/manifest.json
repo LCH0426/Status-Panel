@@ -1,0 +1,13 @@
+{
+    "entry": "Status.js",
+    "name": "Status",
+    "type": "lse-quickjs",
+    "version": "1.0.1",
+    "description": "网页监控面板",
+    "extraInfo": {},
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}
