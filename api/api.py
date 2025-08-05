@@ -15,6 +15,30 @@ import platform
 import subprocess
 import re
 import shutil
+from rich.console import Console
+from rich.panel import Panel
+from rich import box
+
+
+# ================= 版本信息 =================
+def inf():
+    console = Console()
+    content = "\n".join([
+        "Status Panel for LeviLamina",
+        "作者: LCH0426",
+        "版本: 1.1.0",
+        "https://github.com/LCH0426/Status-Panel"
+    ])
+    
+    panel = Panel(content, 
+                 expand=False,
+                 width=86,
+                 border_style="white",
+                 style="default",
+                 box=box.SQUARE)
+    console.print(panel)
+
+inf()
 
 # ================= 全局变量 =================
 # 确定程序目录（打包后为可执行文件所在目录）
@@ -36,9 +60,6 @@ DEFAULT_CONFIG = {
     "game_api": "http://127.0.0.1:8080/",  # 游戏API地址
     "game_update_interval": 3,  # 游戏数据更新间隔
     "game_api_timeout": 10,     # 游戏API连接超时时间(秒)
-    "node": "Node1",            # 节点名称
-    "bg": "https://example.com/background.jpg",  # 背景图片URL
-    "footer": "Server Monitor v1.0",  # 页脚信息
     "log_enabled": True,        # 是否启用日志
     "game_monitor_enabled": True,  # 是否启用游戏API监控
     "monitor_gpu": False         # 是否监控GPU
