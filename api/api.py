@@ -440,76 +440,194 @@ def get_gpu_info():
     
     return gpu_name, gpu_usage
 
+# ================= 虚拟机检测函数 =================
 def detect_virtual_machine():
     """检测当前是否在虚拟机中运行"""
     try:
-        # Windows系统检测
-        if platform.system() == "Windows":
-            # 方法1: 检查系统制造商
-            manufacturer = platform.uname().system
-            if any(vm_indicator in manufacturer for vm_indicator in ["VMware", "VirtualBox", "KVM", "Xen"]):
-                return True
-            
-            # 方法2: 检查模型名称
-            model = subprocess.check_output(
-                "wmic computersystem get model", 
-                shell=True, 
-                stderr=subprocess.DEVNULL, 
-                text=True
-            ).strip()
-            if "Virtual" in model:
-                return True
-            
-            # 方法3: 检查磁盘控制器
-            disk_controllers = subprocess.check_output(
-                "wmic diskdrive get manufacturer,model", 
-                shell=True, 
-                stderr=subprocess.DEVNULL, 
-                text=True
-            ).strip()
-            if "VMware" in disk_controllers or "Virtual" in disk_controllers:
-                return True
-            
-            return False
-        
-        # Linux系统检测
-        elif platform.system() == "Linux":
-            # 方法1: 检查dmesg输出
-            dmesg = subprocess.check_output("dmesg", shell=True, stderr=subprocess.DEVNULL, text=True)
-            if "hypervisor" in dmesg:
-                return True
-                
-            # 方法2: 检查系统文件
-            if os.path.exists("/sys/class/dmi/id/product_name"):
-                with open("/sys/class/dmi/id/product_name", "r") as f:
-                    product_name = f.read().strip()
-                    if any(vm_name in product_name for vm_name in ["VMware", "VirtualBox", "KVM", "QEMU"]):
+        system = platform.system()
+        manufacturer = platform.uname().system.lower()
+
+        # 通用检测方法
+        if any(keyword in manufacturer for keyword in ["vmware", "virtual", "kvm", "qemu", "xen", "hyperv"]):
+            return True
+
+        # Linux 系统检测
+        if system == "Linux":
+            # 方法1: 检查 /proc/cpuinfo 中的 hypervisor 标志
+            if os.path.exists("/proc/cpuinfo"):
+                with open("/proc/cpuinfo", "r", encoding="utf-8") as f:
+                    if "hypervisor" in f.read().lower():
                         return True
             
+            # 方法2: 检查系统文件
+            vm_files = [
+                "/sys/class/dmi/id/product_name",
+                "/sys/class/dmi/id/sys_vendor",
+                "/sys/class/dmi/id/board_vendor"
+            ]
+            vm_keywords = ["vmware", "virtualbox", "kvm", "qemu", "xen", "oracle", "innotek", "bochs"]
+            
+            for file_path in vm_files:
+                if os.path.exists(file_path):
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        content = f.read().lower()
+                        if any(keyword in content for keyword in vm_keywords):
+                            return True
+            
             # 方法3: 检查系统模块
-            modules = subprocess.check_output("lsmod", shell=True, stderr=subprocess.DEVNULL, text=True)
-            if "vboxguest" in modules or "vmw_balloon" in modules:
-                return True
+            if os.path.exists("/proc/modules"):
+                with open("/proc/modules", "r", encoding="utf-8") as f:
+                    modules = f.read().lower()
+                    if "vboxguest" in modules or "vmw_balloon" in modules or "xen_" in modules:
+                        return True
+            
+            # 方法4: 使用 dmidecode 命令
+            try:
+                result = subprocess.run(
+                    ["dmidecode", "-s", "system-product-name"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=True
+                )
+                output = result.stdout.lower()
+                if any(keyword in output for keyword in ["vmware", "virtualbox", "kvm", "qemu"]):
+                    return True
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+        
+        # Windows 系统检测
+        elif system == "Windows":
+            # 方法1: 检查系统制造商
+            try:
+                result = subprocess.run(
+                    ["wmic", "computersystem", "get", "manufacturer"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=True
+                )
+                output = result.stdout.lower()
+                if any(keyword in output for keyword in ["vmware", "innotek", "xen", "qemu"]):
+                    return True
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            
+            # 方法2: 检查 BIOS 信息
+            try:
+                result = subprocess.run(
+                    ["wmic", "bios", "get", "manufacturer"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=True
+                )
+                output = result.stdout.lower()
+                if any(keyword in output for keyword in ["vmware", "virtualbox", "xen", "qemu"]):
+                    return True
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            
+            # 方法3: 检查磁盘控制器
+            try:
+                result = subprocess.run(
+                    ["wmic", "diskdrive", "get", "model"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=True
+                )
+                output = result.stdout.lower()
+                if any(keyword in output for keyword in ["vmware", "virtual"]):
+                    return True
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            
+            # 方法4: 检查注册表
+            try:
+                import winreg
+                vm_registry_keys = [
+                    r"SOFTWARE\Oracle\VirtualBox",
+                    r"SOFTWARE\VMware, Inc.\VMware Tools",
+                    r"SOFTWARE\XenSource",
+                    r"HARDWARE\ACPI\DSDT\VBOX__",
+                ]
                 
-            return False
+                for key_path in vm_registry_keys:
+                    try:
+                        winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+                        return True
+                    except FileNotFoundError:
+                        pass
+            except ImportError:
+                pass
         
-        # macOS系统检测
-        elif platform.system() == "Darwin":
-            # 方法: 检查系统报告
-            sys_profiler = subprocess.check_output(
-                "system_profiler SPHardwareDataType", 
-                shell=True, 
-                stderr=subprocess.DEVNULL, 
-                text=True
-            )
-            if "VMware" in sys_profiler or "Parallels" in sys_profiler or "VirtualBox" in sys_profiler:
-                return True
-            return False
+        # macOS 系统检测
+        elif system == "Darwin":
+            # 方法1: 检查系统信息
+            try:
+                result = subprocess.run(
+                    ["sysctl", "-n", "machdep.cpu.features"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=True
+                )
+                output = result.stdout.lower()
+                if "hypervisor" in output:
+                    return True
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            
+            # 方法2: 检查硬件模型
+            try:
+                result = subprocess.run(
+                    ["sysctl", "-n", "hw.model"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=True
+                )
+                output = result.stdout.lower()
+                if any(keyword in output for keyword in ["virtualbox", "vmware", "parallels"]):
+                    return True
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            
+            # 方法3: 检查进程列表
+            try:
+                result = subprocess.run(
+                    ["ps", "-ax"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=True
+                )
+                output = result.stdout.lower()
+                if any(keyword in output for keyword in ["vmware", "virtualbox", "parallels"]):
+                    return True
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                pass
         
-        # 其他系统
+        # 云服务提供商检测
+        cloud_files = [
+            "/sys/devices/virtual/dmi/id/product_uuid",
+            "/sys/class/dmi/id/product_serial"
+        ]
+        cloud_keywords = ["ec2", "amazon", "google", "gce", "azure", "microsoft"]
+        
+        for file_path in cloud_files:
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read().lower()
+                    if any(keyword in content for keyword in cloud_keywords):
+                        return True
+        
+        # 如果所有检测都通过，则不是虚拟机
         return False
     
-    except Exception:
+    except Exception as e:
+        logger.error(f"虚拟机检测失败: {e}")
         return False
 
 # ================= 监控线程 =================
