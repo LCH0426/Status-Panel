@@ -7,14 +7,7 @@
     "game_api": "http://127.0.0.1:8080/",
     "game_update_interval": 3,
     "game_api_timeout": 10,
-    "node": "Node1",
-    "bg": "https://example.com/background.jpg",
-    "footer": "Server Monitor v1.0",
     "log_enabled": true,
-    "wsgi_server": "waitress",
-    "monitor_cpu": true,
-    "monitor_memory": true,
-    "monitor_network": true,
-    "monitor_disk": true,
+    "game_monitor_enabled": true,
     "monitor_gpu": false
 }
