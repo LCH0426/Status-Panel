@@ -1,0 +1,6 @@
+{
+    "api_port": 8000,
+    "log_enabled": true,
+    "console_log": true,
+    "monitor_gpu": false
+}
