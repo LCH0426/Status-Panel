@@ -1,7 +1,9 @@
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 import psutil
 import time
 import threading
+import json
 import os
 import sys
 import logging
@@ -12,7 +14,6 @@ import platform
 import subprocess
 import re
 import shutil
-import json
 from rich.console import Console
 from rich.panel import Panel
 from rich import box
@@ -22,7 +23,7 @@ from rich import box
 def inf():
     console = Console()
     content = "\n".join([
-        "Status Panel API for Windows amd64",
+        "Status Panel for LeviLamina (No Web)",
         "作者: LCH0426",
         "版本: 1.1.0",
         "https://github.com/LCH0426/Status-Panel"
@@ -52,12 +53,13 @@ CONFIG_FILE = 'config.json'
 DEFAULT_CONFIG = {
     "api_port": 8000,    # API服务端口
     "log_enabled": True,        # 是否启用日志
-    "monitor_gpu": False,        # 是否监控GPU
-    "log_requests": True        # 是否记录请求日志
+    "console_log": True,         # 是否启用控制台日志
+    "monitor_gpu": False         # 是否监控GPU
 }
 
 def load_config():
     """加载配置文件，优先使用程序所在目录的配置"""
+    console = Console()  # 使用Rich控制台输出
     try:
         # 程序目录中的配置文件
         app_dir_config = os.path.join(APP_DIR, CONFIG_FILE)
@@ -70,60 +72,61 @@ def load_config():
         # 优先使用程序所在目录的配置文件
         if os.path.exists(app_dir_config):
             config_path = app_dir_config
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                # 合并配置，确保所有必要的键都存在
-                final_config = {**DEFAULT_CONFIG, **config}
-                print(f"加载配置文件: {config_path}")
-                return final_config
         elif resource_dir_config and os.path.exists(resource_dir_config):
             # 如果程序目录没有配置文件，但从资源目录找到，则复制到程序目录
             try:
                 shutil.copy(resource_dir_config, app_dir_config)
-                print(f"已复制默认配置文件到: {app_dir_config}")
-                with open(app_dir_config, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    final_config = {**DEFAULT_CONFIG, **config}
-                    return final_config
+                console.print(f"已复制默认配置文件到: {app_dir_config}")
+                config_path = app_dir_config
             except Exception as e:
-                print(f"复制配置文件失败: {e}")
-                # 直接使用资源目录的配置
-                with open(resource_dir_config, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    final_config = {**DEFAULT_CONFIG, **config}
-                    return final_config
+                console.print(f"复制配置文件失败: {e}")
+                config_path = resource_dir_config
         else:
             # 没有配置文件，在程序目录创建默认配置
-            try:
-                with open(app_dir_config, 'w', encoding='utf-8') as f:
-                    json.dump(DEFAULT_CONFIG, f, indent=4, ensure_ascii=False)
-                print(f"创建默认配置文件: {app_dir_config}")
-                return DEFAULT_CONFIG.copy()  # 返回副本
-            except Exception as e:
-                print(f"创建配置文件失败: {e}, 使用内存中的默认配置")
-                return DEFAULT_CONFIG.copy()
+            config_path = app_dir_config
+        
+        if os.path.exists(config_path):
+            # 使用UTF-8编码打开文件
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                # 合并配置，确保所有必要的键都存在
+                final_config = {**DEFAULT_CONFIG, **config}
+                console.print(f"加载配置文件: {config_path}")
+                return final_config
+        else:
+            # 创建默认配置文件到程序目录，使用UTF-8编码
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(DEFAULT_CONFIG, f, indent=4, ensure_ascii=False)
+            console.print(f"创建默认配置文件: {config_path}")
+            return DEFAULT_CONFIG
     except Exception as e:
-        print(f"配置文件加载错误: {e}")
-        return DEFAULT_CONFIG.copy()
+        console.print(f"配置文件加载错误: {e}")
+        return DEFAULT_CONFIG
 
 # 先加载配置
 config = load_config()
 
+
 # ================= 配置日志 =================
-def setup_logging(log_enabled):
+def setup_logging(config):
+    """根据配置设置日志系统"""
+    log_enabled = config["log_enabled"]
+    console_log_enabled = config["console_log"]
+    
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     
-    # 控制台日志处理器 (始终启用)
-    console_handler = logging.StreamHandler()
-    console_formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%H:%M:%S'  # 只显示时间（时:分:秒）
-    )
-    console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
+    # 控制台日志处理器 (根据配置决定)
+    if console_log_enabled:
+        console_handler = logging.StreamHandler()
+        console_formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%H:%M:%S'  # 只显示时间（时:分:秒）
+        )
+        console_handler.setFormatter(console_formatter)
+        logger.addHandler(console_handler)
     
-    # 文件日志处理器 (根据配置决定是否启用)
+    # 文件日志处理器 (根据配置决定)
     if log_enabled:
         # 日志目录在程序目录下
         log_dir = os.path.join(APP_DIR, "logs")
@@ -133,7 +136,7 @@ def setup_logging(log_enabled):
         log_file = os.path.join(log_dir, "api_service.log")
         
         file_handler = RotatingFileHandler(
-            log_file, maxBytes=5*1024*1024, backupCount=3, encoding='utf-8'
+            log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8'
         )
         file_formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -145,13 +148,12 @@ def setup_logging(log_enabled):
     return logger
 
 # 现在可以初始化日志系统
-logger = setup_logging(config["log_enabled"])
+logger = setup_logging(config)
 logger.info(f"日志系统初始化完成，文件日志{'已启用' if config['log_enabled'] else '已禁用'}")
-logger.info(f"请求日志记录: {'已启用' if config.get('log_requests', True) else '已禁用'}")
+logger.info(f"控制台日志{'已启用' if config['console_log'] else '已禁用'}")
 logger.info(f"程序目录: {APP_DIR}")
 
-# ================= 全局变量 =================
-# 服务停止标志
+# ================= 服务停止标志 =================
 SERVICE_SHUTDOWN = threading.Event()
 
 # ================= 信号处理函数 =================
@@ -178,19 +180,18 @@ atexit.register(cleanup)
 
 # ================= 创建API应用 =================
 api_app = Flask(__name__)
+CORS(api_app)
 
-# ================= 请求日志中间件 =================
+# 添加请求日志记录
 @api_app.before_request
-def log_before_request():
-    """记录请求信息"""
-    if config.get("log_requests", True):
+def log_request_info():
+    if request.path == '/':
         logger.info(f">>> {request.remote_addr} - {request.method} {request.path}")
 
 @api_app.after_request
-def log_after_request(response):
-    """记录响应信息"""
-    if config.get("log_requests", True):
-        logger.info(f"<<< {request.remote_addr} - {request.method} {request.path} - {response.status_code}")
+def log_response_info(response):
+    if request.path == '/':
+        logger.info(f"<<< {request.remote_addr} - {request.method} {request.path} - {response.status}")
     return response
 
 # ================= 全局数据结构 =================
@@ -211,11 +212,11 @@ system_data = {
     "cpu_arch": "Unknown",
     "is_vm": False,
     "cpu_base_freq_ghz": 0.0,
-    "memory_total_int_gb": 0,
-    "system_version": "",
+    "system_type": "",        # 操作系统类型
+    "system_kernel": "",      # 内核版本
     "gpu_name": "N/A",
     "gpu_usage": 0.0,
-    # 程序所在磁盘信息 - 使用您要求的字段名
+    # 新增磁盘信息
     "root_disk_total_gb": 0.0,
     "root_disk_used_gb": 0.0
 }
@@ -245,29 +246,8 @@ STATUS_CODES = {
 def get_cpu_name():
     """获取CPU名称（跨平台实现）"""
     try:
-        # Linux系统
-        if platform.system() == "Linux":
-            try:
-                # 方法1: 读取/proc/cpuinfo
-                if os.path.exists('/proc/cpuinfo'):
-                    with open('/proc/cpuinfo', 'r', encoding='utf-8') as f:
-                        for line in f:
-                            if line.startswith('model name'):
-                                return line.split(':')[1].strip()
-                
-                # 方法2: 使用lscpu命令
-                result = subprocess.run(
-                    ['lscpu'], capture_output=True, text=True, timeout=2
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    match = re.search(r'Model name:\s*(.+)', result.stdout)
-                    if match:
-                        return match.group(1).strip()
-            except:
-                pass
-        
         # Windows系统
-        elif platform.system() == "Windows":
+        if platform.system() == "Windows":
             try:
                 # 方法1: 使用wmic命令
                 result = subprocess.run(
@@ -292,6 +272,27 @@ def get_cpu_name():
                     return result.stdout.strip()
             except:
                 # 两种方法都失败时使用platform
+                pass
+        
+        # Linux系统
+        elif platform.system() == "Linux":
+            try:
+                # 方法1: 读取/proc/cpuinfo
+                if os.path.exists('/proc/cpuinfo'):
+                    with open('/proc/cpuinfo', 'r', encoding='utf-8') as f:
+                        for line in f:
+                            if line.startswith('model name'):
+                                return line.split(':')[1].strip()
+                
+                # 方法2: 使用lscpu命令
+                result = subprocess.run(
+                    ['lscpu'], capture_output=True, text=True, timeout=2
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    match = re.search(r'Model name:\s*(.+)', result.stdout)
+                    if match:
+                        return match.group(1).strip()
+            except:
                 pass
         
         # macOS系统
@@ -324,8 +325,8 @@ def get_gpu_info():
     gpu_usage = 0.0
     
     try:
-        # Linux 使用 nvidia-smi
-        if platform.system() == "Linux":
+        # Windows 使用 nvidia-smi
+        if platform.system() == "Windows":
             result = subprocess.run(
                 ['nvidia-smi', '--query-gpu=name,utilization.gpu', '--format=csv,noheader,nounits'],
                 capture_output=True, text=True, timeout=2
@@ -336,8 +337,8 @@ def get_gpu_info():
                     gpu_name = gpu_info[0].strip()
                     gpu_usage = float(gpu_info[1].strip())
         
-        # Windows 使用 nvidia-smi
-        elif platform.system() == "Windows":
+        # Linux 使用 nvidia-smi
+        elif platform.system() == "Linux":
             result = subprocess.run(
                 ['nvidia-smi', '--query-gpu=name,utilization.gpu', '--format=csv,noheader,nounits'],
                 capture_output=True, text=True, timeout=2
@@ -373,9 +374,144 @@ def get_gpu_info():
     
     return gpu_name, gpu_usage
 
-# ================= 改进的虚拟机检测函数 =================
+# ================= 获取系统类型和内核版本 =================
+def get_system_info():
+    """获取操作系统类型和内核版本信息"""
+    system = platform.system()
+    system_type = ""
+    kernel_version = ""
+    
+    try:
+        # Windows 系统
+        if system == "Windows":
+            # 方法1: 使用 platform.version()
+            kernel_version = platform.version()
+            
+            # 方法2: 使用 sys.getwindowsversion()
+            if not kernel_version:
+                win_version = sys.getwindowsversion()
+                kernel_version = f"{win_version.major}.{win_version.minor}.{win_version.build}"
+            
+            # 方法3: 使用 wmic 命令
+            if not kernel_version:
+                try:
+                    result = subprocess.run(
+                        ['wmic', 'os', 'get', 'version', '/value'],
+                        capture_output=True, text=True, timeout=2
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        match = re.search(r'Version=([^\n]+)', result.stdout)
+                        if match:
+                            kernel_version = match.group(1).strip()
+                except:
+                    pass
+            
+            # 方法4: 读取注册表
+            if not kernel_version:
+                try:
+                    import winreg
+                    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as key:
+                        kernel_version, _ = winreg.QueryValueEx(key, "CurrentVersion")
+                except:
+                    pass
+            
+            # 获取友好的系统名称
+            try:
+                result = subprocess.run(
+                    ['wmic', 'os', 'get', 'caption', '/value'],
+                    capture_output=True, text=True, timeout=2
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    match = re.search(r'Caption=([^\n]+)', result.stdout)
+                    if match:
+                        system_type = match.group(1).strip()
+            except:
+                # 如果失败，使用 platform
+                win_version = platform.win32_ver()
+                if win_version[0]:
+                    system_type = f"Windows {win_version[0]}"
+                else:
+                    system_type = "Windows"
+        
+        # Linux 系统
+        elif system == "Linux":
+            # 获取发行版名称
+            try:
+                # 检查 /etc/os-release 文件
+                if os.path.exists('/etc/os-release'):
+                    with open('/etc/os-release', 'r', encoding='utf-8') as f:
+                        for line in f:
+                            if line.startswith('PRETTY_NAME='):
+                                system_type = line.split('=')[1].strip().strip('"')
+                                break
+                            elif line.startswith('NAME=') and not system_type:
+                                system_type = line.split('=')[1].strip().strip('"')
+                
+                # 如果未找到，尝试使用 lsb_release 命令
+                if not system_type:
+                    result = subprocess.run(
+                        ['lsb_release', '-d'], 
+                        capture_output=True, text=True, timeout=2
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        match = re.search(r'Description:\s*(.+)', result.stdout)
+                        if match:
+                            system_type = match.group(1).strip()
+                
+                # 如果仍然未找到，使用通用 Linux 名称
+                if not system_type:
+                    system_type = "Linux"
+                
+                # 获取内核版本
+                kernel_version = platform.release()
+            except:
+                system_type = "Linux"
+                kernel_version = platform.release()
+        
+        # macOS 系统
+        elif system == "Darwin":
+            try:
+                # 获取系统名称
+                result = subprocess.run(
+                    ['sw_vers', '-productName'], 
+                    capture_output=True, text=True, timeout=2
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    product_name = result.stdout.strip()
+                    
+                    # 获取版本号
+                    result_ver = subprocess.run(
+                        ['sw_vers', '-productVersion'], 
+                        capture_output=True, text=True, timeout=2
+                    )
+                    if result_ver.returncode == 0 and result_ver.stdout.strip():
+                        system_type = f"{product_name} {result_ver.stdout.strip()}"
+                    else:
+                        system_type = product_name
+                else:
+                    system_type = "macOS"
+                
+                # 获取内核版本
+                kernel_version = platform.release()
+            except:
+                system_type = "macOS"
+                kernel_version = platform.release()
+        
+        # 其他系统
+        else:
+            system_type = system
+            kernel_version = platform.release()
+    
+    except Exception as e:
+        logger.error(f"获取系统信息失败: {e}")
+        system_type = system
+        kernel_version = platform.release()
+    
+    return system_type, kernel_version
+
+# ================= 虚拟机检测函数 =================
 def detect_virtual_machine():
-    """检测当前是否在虚拟机中运行（改进版）"""
+    """检测当前是否在虚拟机中运行"""
     try:
         system = platform.system()
         manufacturer = platform.uname().system.lower()
@@ -563,22 +699,6 @@ def detect_virtual_machine():
         logger.error(f"虚拟机检测失败: {e}")
         return False
 
-def get_program_disk_info():
-    """获取程序所在磁盘分区的信息"""
-    try:
-        # 获取程序所在路径的磁盘使用情况
-        disk_usage = psutil.disk_usage(APP_DIR)
-        return {
-            "total_gb": disk_usage.total / GB_DIVISOR,
-            "used_gb": disk_usage.used / GB_DIVISOR
-        }
-    except Exception as e:
-        logger.error(f"获取程序磁盘信息失败: {e}")
-        return {
-            "total_gb": 0.0,
-            "used_gb": 0.0
-        }
-
 # ================= 监控线程 =================
 def system_monitor_thread():
     """实时更新系统监控数据（每秒执行）"""
@@ -598,33 +718,27 @@ def system_monitor_thread():
             system_data["cpu_cores"] = psutil.cpu_count(logical=True)
             
             # 获取CPU最大频率（GHz）
-            try:
-                cpu_freq = psutil.cpu_freq()
-                if cpu_freq:
-                    system_data["cpu_base_freq_ghz"] = round(cpu_freq.max / 1000, 2)
-            except Exception:
-                # 某些Linux系统可能不支持
-                system_data["cpu_base_freq_ghz"] = 0.0
+            cpu_freq = psutil.cpu_freq()
+            if cpu_freq:
+                system_data["cpu_base_freq_ghz"] = round(cpu_freq.max / 1000, 2)
             
-            # 获取系统版本信息
-            system_data["system_version"] = f"{platform.system()} {platform.release()} {platform.version()}"
+            # 获取系统类型和内核版本
+            system_type, kernel_version = get_system_info()
+            system_data["system_type"] = system_type
+            system_data["system_kernel"] = kernel_version
             
-            # 获取程序磁盘信息
-            disk_info = get_program_disk_info()
-            system_data["root_disk_total_gb"] = disk_info["total_gb"]
-            system_data["root_disk_used_gb"] = disk_info["used_gb"]
+            # 获取根目录磁盘信息
+            root_disk = psutil.disk_usage('/')
+            system_data["root_disk_total_gb"] = root_disk.total / GB_DIVISOR
+            system_data["root_disk_used_gb"] = root_disk.used / GB_DIVISOR
             
             logger.info(f"CPU名称: {system_data['cpu_name']}")
             logger.info(f"CPU架构: {system_data['cpu_arch']}")
             logger.info(f"虚拟机状态: {'是' if system_data['is_vm'] else '否'}")
-            logger.info(f"程序磁盘路径: {APP_DIR}")
-            logger.info(f"磁盘总容量: {disk_info['total_gb']:.2f} GB")
-            logger.info(f"磁盘已用容量: {disk_info['used_gb']:.2f} GB")
+            logger.info(f"系统类型: {system_type}")
+            logger.info(f"内核版本: {kernel_version}")
     except Exception as e:
         logger.error(f"初始化系统信息失败: {e}", exc_info=True)
-    
-    # 上次磁盘信息更新时间
-    last_disk_info_update = time.time()
     
     while not SERVICE_SHUTDOWN.is_set():  # 检查退出标志
         try:
@@ -632,22 +746,19 @@ def system_monitor_thread():
             time_diff = max(current_time - last_update_time, 1e-6)  # 防止除零
             
             with system_data_lock:
-                # 1. CPU监控
+                # 1. CPU监控 (总是开启)
                 system_data["cpu_usage"] = psutil.cpu_percent(interval=0.1)
                 
-                # 2. 内存监控
+                # 2. 内存监控 (总是开启)
                 mem = psutil.virtual_memory()
+                # 精确读取内存总量（不考虑核显占用）
                 system_data["memory_total_gb"] = mem.total / GB_DIVISOR
                 system_data["memory_used_gb"] = mem.used / GB_DIVISOR
-                
-                # 计算内存整数GB值
-                memory_total_gb = mem.total / GB_DIVISOR
-                system_data["memory_total_int_gb"] = int(memory_total_gb) + (1 if memory_total_gb % 1 > 0 else 0)
                 
                 # 3. 系统运行时间
                 system_data["system_uptime_hr"] = (time.time() - psutil.boot_time()) / 3600
                 
-                # 4. 网络监控
+                # 4. 网络监控 (总是开启)
                 current_net_io = psutil.net_io_counters()
                 
                 # 更新总量
@@ -664,7 +775,7 @@ def system_monitor_thread():
                 
                 last_net_io = current_net_io
                 
-                # 5. 磁盘监控
+                # 5. 磁盘监控 (总是开启)
                 current_disk_io = psutil.disk_io_counters()
                 system_data["disk_read_rate_mbs"] = (
                     current_disk_io.read_bytes - last_disk_io.read_bytes
@@ -688,12 +799,10 @@ def system_monitor_thread():
                     system_data["gpu_name"] = "Monitoring Disabled"
                     system_data["gpu_usage"] = 0.0
                 
-                # 7. 更新程序磁盘信息（每10秒更新一次）
-                if current_time_sec - last_disk_info_update > 10:
-                    disk_info = get_program_disk_info()
-                    system_data["root_disk_total_gb"] = disk_info["total_gb"]
-                    system_data["root_disk_used_gb"] = disk_info["used_gb"]
-                    last_disk_info_update = current_time_sec
+                # 7. 更新根目录磁盘信息
+                root_disk = psutil.disk_usage('/')
+                system_data["root_disk_total_gb"] = root_disk.total / GB_DIVISOR
+                system_data["root_disk_used_gb"] = root_disk.used / GB_DIVISOR
                 
         except Exception as e:
             logger.error(f"系统监控线程错误: {e}", exc_info=True)
@@ -701,8 +810,8 @@ def system_monitor_thread():
 
 # ================= API端点 =================
 @api_app.route('/', methods=['GET'])
-def get_aggregated_status():
-    """API：返回系统状态"""
+def get_system_status():
+    """仅返回系统状态"""
     # 检查服务是否已停止
     if SERVICE_SHUTDOWN.is_set():
         return jsonify({
@@ -724,6 +833,8 @@ def get_aggregated_status():
                 "is_vm": system_data["is_vm"],
                 "memory_total_gb": round(system_data["memory_total_gb"], 2),
                 "memory_used_gb": round(system_data["memory_used_gb"], 2),
+                "root_disk_total_gb": round(system_data["root_disk_total_gb"], 2),
+                "root_disk_used_gb": round(system_data["root_disk_used_gb"], 2),
                 "net_upload_rate_mbps": round(system_data["net_sent_rate_mbps"], 2),
                 "net_download_rate_mbps": round(system_data["net_recv_rate_mbps"], 2),
                 "net_total_upload_gb": round(system_data["net_total_sent_gb"], 3),
@@ -734,13 +845,10 @@ def get_aggregated_status():
                 "program_uptime_hours": round(program_uptime_hours, 1),
                 "cpu_cores": system_data["cpu_cores"],
                 "cpu_base_freq_ghz": system_data["cpu_base_freq_ghz"],
-                "memory_total_int_gb": system_data["memory_total_int_gb"],
-                "system_version": system_data["system_version"],
+                "system_type": system_data["system_type"],
+                "system_kernel": system_data["system_kernel"],
                 "gpu_name": system_data["gpu_name"],
-                "gpu_usage_percent": round(system_data["gpu_usage"], 1),
-                # 使用您要求的字段名
-                "root_disk_total_gb": round(system_data["root_disk_total_gb"], 2),
-                "root_disk_used_gb": round(system_data["root_disk_used_gb"], 2)
+                "gpu_usage_percent": round(system_data["gpu_usage"], 1)
             }
     except Exception as e:
         logger.error(f"获取系统状态失败: {e}", exc_info=True)
@@ -760,15 +868,8 @@ def get_aggregated_status():
     # 返回响应
     return jsonify(response_data), response_data["code"]
 
-# ================= WSGI 入口点 =================
-def create_app():
-    """创建WSGI应用（用于Gunicorn等服务器）"""
-    # 启动监控线程
-    threading.Thread(target=system_monitor_thread, daemon=True).start()
-    return api_app
-
 # ================= 主程序 =================
-def run_server():
+def run_api_server():
     """启动API服务"""
     # 启动监控线程
     threading.Thread(target=system_monitor_thread, daemon=True).start()
@@ -777,21 +878,12 @@ def run_server():
     
     try:
         from waitress import serve
-        
-        # 启动API服务
-        logger.info(f"使用Waitress启动API服务: http://0.0.0.0:{api_port}")
+        logger.info(f"使用Waitress启动API服务: http://localhost:{api_port}")
         serve(api_app, host='0.0.0.0', port=api_port)
-    
     except ImportError:
         logger.warning("Waitress未安装，使用Flask内置服务器")
-        logger.info(f"使用Flask内置服务器启动API服务: http://0.0.0.0:{api_port}")
-        api_app.run(
-            host='0.0.0.0', 
-            port=api_port,
-            threaded=True
-        )
-    
-    logger.info("程序退出")
+        logger.info(f"使用Flask内置服务器启动API服务: http://localhost:{api_port}")
+        api_app.run(host='0.0.0.0', port=api_port, threaded=True)
 
 if __name__ == '__main__':
-    run_server()
+    run_api_server()
