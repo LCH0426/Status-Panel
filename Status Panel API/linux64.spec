@@ -6,8 +6,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('config.json', '.'),  
-        ('logs', 'logs') if os.path.exists('logs') else None, 
-        ('web', 'web') if os.path.exists('web') else None  
+        ('logs', 'logs') if os.path.exists('logs') else None
     ],
     hiddenimports=[],
     hookspath=[],
@@ -41,4 +40,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+
 )
