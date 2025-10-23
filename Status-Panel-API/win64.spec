@@ -2,7 +2,7 @@
 block_cipher = None
 
 a = Analysis(
-    ['api.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
     datas=[
@@ -40,4 +40,5 @@ exe = EXE(
     target_arch='x64', 
     codesign_identity=None,
     entitlements_file=None,
+
 )
