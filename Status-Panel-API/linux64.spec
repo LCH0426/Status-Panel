@@ -1,13 +1,19 @@
+import os
 block_cipher = None
+
+
+raw_datas = [
+    ('config.json', '.'),
+    ('logs', 'logs') if os.path.exists('logs') else ()  
+]
+
+filtered_datas = [item for item in raw_datas if item]
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('config.json', '.'),  
-        ('logs', 'logs') if os.path.exists('logs') else None
-    ],
+    datas=filtered_datas, 
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -28,7 +34,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name=exe_name, 
+    name=exe_name,
     debug=False,
     strip=False,
     upx=True,
@@ -40,6 +46,4 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-
 )
-
