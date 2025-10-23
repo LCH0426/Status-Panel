@@ -138,20 +138,19 @@ server = None  # 用于存储服务器实例，便于关闭
 # ================= 信号处理函数 =================
 def handle_exit_signal(signum, frame):
     """处理退出信号，确保优雅关闭"""
-    logger.info(f"接收到退出信号 {signum} (Ctrl+C)，正在关闭服务...")
+    logger.info(f"接收到退出信号 {signum}，正在关闭服务...")
     SERVICE_SHUTDOWN.set()
     
-    if server:
-        try:
-            server.shutdown()
-            logger.info("服务器已主动关闭")
-        except Exception as e:
-            logger.warning(f"关闭服务器时出错: {e}")
+    # 强制退出，避免Waitress阻塞
+    logger.info("强制退出进程...")
+    os._exit(0)
 
-signal.signal(signal.SIGINT, handle_exit_signal)   # Ctrl+C
-signal.signal(signal.SIGTERM, handle_exit_signal)  # kill 命令
-if hasattr(signal, 'SIGBREAK'):
-    signal.signal(signal.SIGBREAK, handle_exit_signal)  # Windows Ctrl+Break
+def setup_signal_handlers():
+    """设置信号处理器"""
+    signal.signal(signal.SIGINT, handle_exit_signal)   # Ctrl+C
+    signal.signal(signal.SIGTERM, handle_exit_signal)  # kill 命令
+    if hasattr(signal, 'SIGBREAK'):
+        signal.signal(signal.SIGBREAK, handle_exit_signal)  # Windows Ctrl+Break
 
 def cleanup():
     if SERVICE_SHUTDOWN.is_set():
@@ -618,7 +617,8 @@ def system_monitor_thread():
                 
         except Exception as e:
             logger.error(f"系统监控线程错误: {e}", exc_info=True)
-        time.sleep(1)
+        # 关键修改：使用带超时的wait替代sleep，确保能及时响应退出信号
+        SERVICE_SHUTDOWN.wait(1)
 
 # ================= API端点 =================
 @api_app.route('/', methods=['GET'])
@@ -679,6 +679,9 @@ def run_api_server():
     """启动API服务"""
     global server
     
+    # 设置信号处理器
+    setup_signal_handlers()
+    
     monitor_thread = threading.Thread(target=system_monitor_thread, daemon=True)
     monitor_thread.start()
     
@@ -688,7 +691,21 @@ def run_api_server():
         from waitress import serve
         logger.info(f"使用Waitress启动API服务: http://localhost:{api_port}")
         
-        server = serve(api_app, host='0.0.0.0', port=api_port)
+        # 关键修改：使用单独的线程运行Waitress，避免阻塞主线程
+        def run_waitress():
+            try:
+                serve(api_app, host='0.0.0.0', port=api_port, threads=4)
+            except Exception as e:
+                logger.error(f"Waitress服务器错误: {e}")
+        
+        waitress_thread = threading.Thread(target=run_waitress, daemon=True)
+        waitress_thread.start()
+        
+        # 主线程等待退出信号
+        while not SERVICE_SHUTDOWN.is_set():
+            time.sleep(0.5)
+            
+        logger.info("接收到退出信号，正在关闭Waitress服务器...")
         
     except ImportError:
         logger.warning("Waitress未安装，使用Flask内置服务器")
